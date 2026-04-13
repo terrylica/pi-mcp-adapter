@@ -155,9 +155,13 @@ export async function ensureCallbackServer(options: EnsureCallbackServerOptions 
   if (server) {
     if (!strictPort || getOAuthCallbackPort() === configuredPort) return
 
-    throw new Error(
-      `OAuth callback server is already running on port ${getOAuthCallbackPort()}, but strict callback port ${configuredPort} is required`
-    )
+    if (pendingAuths.size > 0) {
+      throw new Error(
+        `OAuth callback server is running on port ${getOAuthCallbackPort()}, but strict callback port ${configuredPort} is required and cannot be switched while authorizations are pending`
+      )
+    }
+
+    await stopCallbackServer()
   }
 
   const preferredPort = configuredPort
@@ -180,6 +184,7 @@ export async function ensureCallbackServer(options: EnsureCallbackServerOptions 
       })
 
       server = candidateServer
+      server.unref()
       setOAuthCallbackPort(candidatePort)
       return
     } catch (error) {
@@ -257,7 +262,7 @@ export async function stopCallbackServer(): Promise<void> {
   const pendingList = Array.from(pendingAuths.entries())
   pendingAuths.clear()
   setTimeout(() => {
-    for (const [state, pending] of pendingList) {
+    for (const [, pending] of pendingList) {
       clearTimeout(pending.timeout)
       pending.reject(new Error("OAuth callback server stopped"))
     }

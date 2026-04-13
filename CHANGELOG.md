@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.5] - 2026-04-13
+
+### Fixed
+- Session lifecycle now always tears down OAuth callback state on restart and shutdown, preventing callback-server leaks across session transitions.
+- OAuth callback server now calls `unref()` after successful bind so it no longer keeps sub-agent processes alive by itself.
+- Strict OAuth port mode now rebinds to the configured callback port when safe, while refusing to switch ports when authorizations are still pending.
+- Added focused lifecycle/callback-server regression coverage for teardown, `unref()`, strict rebinding, and pending-auth guardrails.
+- Thanks @blai for the investigation and PR #43 that surfaced the sub-agent hang/root lifecycle issues.
+
 ## [2.3.4] - 2026-04-12
 
 ### Fixed

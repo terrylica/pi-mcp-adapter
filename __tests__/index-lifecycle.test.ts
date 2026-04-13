@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   updateStatusBar: vi.fn(),
   flushMetadataCache: vi.fn(),
   initializeOAuth: vi.fn().mockResolvedValue(undefined),
+  shutdownOAuth: vi.fn().mockResolvedValue(undefined),
   loadMcpConfig: vi.fn(() => ({ mcpServers: {} })),
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
@@ -34,6 +35,7 @@ vi.mock("../init.js", () => ({
 
 vi.mock("../mcp-auth-flow.js", () => ({
   initializeOAuth: mocks.initializeOAuth,
+  shutdownOAuth: mocks.shutdownOAuth,
 }));
 
 vi.mock("../config.js", () => ({
@@ -122,6 +124,7 @@ describe("mcpAdapter session lifecycle", () => {
     }
 
     mocks.initializeOAuth.mockResolvedValue(undefined);
+    mocks.shutdownOAuth.mockResolvedValue(undefined);
     mocks.loadMcpConfig.mockReturnValue({ mcpServers: {} });
     mocks.loadMetadataCache.mockReturnValue(null);
     mocks.buildProxyDescription.mockReturnValue("MCP gateway");
@@ -147,9 +150,11 @@ describe("mcpAdapter session lifecycle", () => {
 
     await sessionStart?.({}, {});
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+    expect(mocks.shutdownOAuth).toHaveBeenCalledTimes(1);
 
     await sessionStart?.({}, {});
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+    expect(mocks.shutdownOAuth).toHaveBeenCalledTimes(2);
 
     const activeState = createState();
     second.resolve(activeState);
@@ -167,6 +172,28 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.updateStatusBar).not.toHaveBeenCalledWith(staleState);
     expect(mocks.flushMetadataCache).toHaveBeenCalledWith(staleState);
     expect(staleState.lifecycle.gracefulShutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("shuts down OAuth on session_shutdown", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const sessionStart = handlers.get("session_start");
+    const sessionShutdown = handlers.get("session_shutdown");
+
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    mocks.shutdownOAuth.mockClear();
+
+    await sessionShutdown?.();
+
+    expect(mocks.shutdownOAuth).toHaveBeenCalledTimes(1);
   });
 
   it("logs initialization errors when updateStatusBar throws", async () => {
