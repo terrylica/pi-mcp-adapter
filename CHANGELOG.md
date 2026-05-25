@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added per-server OAuth `redirectUri`, `clientName`, and `clientUri` overrides for pre-registered callbacks and dynamic client metadata.
+
 ### Fixed
 - Avoided OAuth callback port exhaustion by starting the callback server lazily and using OS-assigned ports for dynamic OAuth flows.
+- Re-register dynamic OAuth clients before browser auth when cached redirect URI metadata is missing or no longer matches the active callback URI.
 
 ## [2.7.0] - 2026-05-22
 

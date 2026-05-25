@@ -28,7 +28,7 @@ import {
 
 // Callback server configuration
 const DEFAULT_OAUTH_CALLBACK_PORT = 19876
-const OAUTH_CALLBACK_PATH = "/callback"
+const DEFAULT_OAUTH_CALLBACK_PATH = "/callback"
 
 let configuredOAuthCallbackPort = DEFAULT_OAUTH_CALLBACK_PORT
 
@@ -40,6 +40,7 @@ if (process.env.MCP_OAUTH_CALLBACK_PORT) {
 }
 
 let oauthCallbackPort = configuredOAuthCallbackPort
+let oauthCallbackPath = DEFAULT_OAUTH_CALLBACK_PATH
 
 export function getConfiguredOAuthCallbackPort(): number {
   return configuredOAuthCallbackPort
@@ -53,12 +54,23 @@ export function setOAuthCallbackPort(port: number): void {
   oauthCallbackPort = port
 }
 
+export function getOAuthCallbackPath(): string {
+  return oauthCallbackPath
+}
+
+export function setOAuthCallbackPath(path: string): void {
+  oauthCallbackPath = path.startsWith("/") ? path : `/${path}`
+}
+
 /** Configuration options for OAuth */
 export interface McpOAuthConfig {
   grantType?: "authorization_code" | "client_credentials"
   clientId?: string
   clientSecret?: string
   scope?: string
+  redirectUri?: string
+  clientName?: string
+  clientUri?: string
 }
 
 /** Callbacks for OAuth flow interactions */
@@ -71,12 +83,18 @@ export interface McpOAuthCallbacks {
  * Implements the OAuthClientProvider interface from the MCP SDK.
  */
 export class McpOAuthProvider implements OAuthClientProvider {
+  private readonly redirectUrlSnapshot: string | undefined
+
   constructor(
     private serverName: string,
     private serverUrl: string,
     private config: McpOAuthConfig,
     private callbacks: McpOAuthCallbacks,
-  ) {}
+  ) {
+    this.redirectUrlSnapshot = config.grantType === "client_credentials"
+      ? undefined
+      : config.redirectUri ?? `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}`
+  }
 
   private get usesClientCredentials(): boolean {
     return this.config.grantType === "client_credentials"
@@ -87,8 +105,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * This must match the redirect_uri in client metadata.
    */
   get redirectUrl(): string | undefined {
-    if (this.usesClientCredentials) return undefined
-    return `http://localhost:${getOAuthCallbackPort()}${OAUTH_CALLBACK_PATH}`
+    return this.redirectUrlSnapshot
   }
 
   /**
@@ -98,7 +115,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
   get clientMetadata(): OAuthClientMetadata {
     if (this.usesClientCredentials) {
       return {
-        client_name: "Pi Coding Agent",
+        client_name: this.config.clientName ?? "Pi Coding Agent",
+        client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
         redirect_uris: [],
         grant_types: ["client_credentials"],
         token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
@@ -112,8 +130,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
     return {
       redirect_uris: [redirectUrl],
-      client_name: "Pi Coding Agent",
-      client_uri: "https://github.com/nicobailon/pi-mcp-adapter",
+      client_name: this.config.clientName ?? "Pi Coding Agent",
+      client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
@@ -155,11 +173,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Save client information from dynamic registration.
    */
   async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
+    const redirectUris = info.redirect_uris ?? (this.redirectUrl ? [this.redirectUrl] : undefined)
     const clientInfo: StoredClientInfo = {
       clientId: info.client_id,
       clientSecret: info.client_secret,
       clientIdIssuedAt: info.client_id_issued_at,
       clientSecretExpiresAt: info.client_secret_expires_at,
+      redirectUris,
     }
     updateClientInfo(this.serverName, clientInfo, this.serverUrl)
   }
@@ -299,4 +319,4 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 }
 
-export { DEFAULT_OAUTH_CALLBACK_PORT, OAUTH_CALLBACK_PATH }
+export { DEFAULT_OAUTH_CALLBACK_PORT, DEFAULT_OAUTH_CALLBACK_PATH }

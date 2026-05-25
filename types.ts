@@ -272,6 +272,12 @@ export interface OAuthConfig {
   clientSecret?: string;
   /** Requested OAuth scopes */
   scope?: string;
+  /** Exact authorization-code redirect URI for pre-registered clients */
+  redirectUri?: string;
+  /** Client display name for dynamic registration */
+  clientName?: string;
+  /** Client homepage URI for dynamic registration */
+  clientUri?: string;
 }
 
 // Server configuration

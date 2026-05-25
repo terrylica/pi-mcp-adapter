@@ -126,6 +126,12 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation |
 | `auth` | `"bearer"` or `"oauth"` |
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
+| `oauth.clientId` | Pre-registered OAuth client ID; dynamic registration is used when omitted |
+| `oauth.clientSecret` | OAuth client secret for confidential clients |
+| `oauth.scope` | Requested OAuth scopes |
+| `oauth.redirectUri` | Exact localhost redirect URI for browser OAuth, including port and path, for providers that pre-register callbacks |
+| `oauth.clientName` | Client display name advertised during dynamic registration |
+| `oauth.clientUri` | Client homepage URI advertised during dynamic registration |
 | `bearerToken` / `bearerTokenEnv` | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation |
 | `lifecycle` | `"lazy"` (default), `"eager"`, or `"keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
@@ -133,6 +139,8 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `directTools` | `true`, `string[]`, or `false` — register tools individually instead of through proxy |
 | `excludeTools` | `string[]` of tool names to hide (matches original names like `get_screenshot` and prefixed names like `figma_get_screenshot`) |
 | `debug` | Show server stderr (default: false) |
+
+For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port.
 
 ### Lifecycle Modes
 

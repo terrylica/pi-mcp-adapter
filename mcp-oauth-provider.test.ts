@@ -13,7 +13,14 @@ import { randomBytes } from "crypto"
 const TEST_DIR = join(tmpdir(), `mcp-oauth-test-${randomBytes(4).toString('hex')}`)
 process.env.MCP_OAUTH_DIR = TEST_DIR
 
-import { McpOAuthProvider } from "./mcp-oauth-provider.ts"
+import {
+  getOAuthCallbackPath,
+  getOAuthCallbackPort,
+  McpOAuthProvider,
+  setOAuthCallbackPath,
+  setOAuthCallbackPort,
+  type McpOAuthConfig,
+} from "./mcp-oauth-provider.ts"
 import { getAuthForUrl, saveAuthEntry, updateOAuthState } from "./mcp-auth.ts"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
@@ -47,7 +54,7 @@ describe("McpOAuthProvider", () => {
     redirectCaptured = undefined
   })
 
-  function createProvider(config: { clientId?: string; clientSecret?: string; scope?: string } = {}) {
+  function createProvider(config: McpOAuthConfig = {}) {
     return new McpOAuthProvider(serverName, serverUrl, config, {
       onRedirect: async (url) => {
         redirectCaptured = url
@@ -62,6 +69,30 @@ describe("McpOAuthProvider", () => {
         provider.redirectUrl,
         "http://localhost:19876/callback"
       )
+    })
+
+    it("should use a configured redirect URI", () => {
+      const provider = createProvider({ redirectUri: "http://localhost:3118/slack/callback" })
+      assert.strictEqual(provider.redirectUrl, "http://localhost:3118/slack/callback")
+    })
+
+    it("should snapshot generated redirect URI at construction", () => {
+      const originalPort = getOAuthCallbackPort()
+      const originalPath = getOAuthCallbackPath()
+      setOAuthCallbackPort(41234)
+      setOAuthCallbackPath("/snapshot/callback")
+
+      try {
+        const provider = createProvider()
+        setOAuthCallbackPort(52345)
+        setOAuthCallbackPath("/changed/callback")
+
+        assert.strictEqual(provider.redirectUrl, "http://localhost:41234/snapshot/callback")
+        assert.deepStrictEqual(provider.clientMetadata.redirect_uris, ["http://localhost:41234/snapshot/callback"])
+      } finally {
+        setOAuthCallbackPort(originalPort)
+        setOAuthCallbackPath(originalPath)
+      }
     })
   })
 
@@ -83,6 +114,31 @@ describe("McpOAuthProvider", () => {
       const metadata = provider.clientMetadata
 
       assert.strictEqual(metadata.token_endpoint_auth_method, "client_secret_post")
+    })
+
+    it("should use configured redirect URI and client metadata", () => {
+      const provider = createProvider({
+        redirectUri: "http://localhost:3118/slack/callback",
+        clientName: "Slack MCP",
+        clientUri: "https://example.com/slack-mcp",
+      })
+      const metadata = provider.clientMetadata
+
+      assert.deepStrictEqual(metadata.redirect_uris, ["http://localhost:3118/slack/callback"])
+      assert.strictEqual(metadata.client_name, "Slack MCP")
+      assert.strictEqual(metadata.client_uri, "https://example.com/slack-mcp")
+    })
+
+    it("should use configured client name for client_credentials", () => {
+      const provider = createProvider({
+        grantType: "client_credentials",
+        clientName: "Service MCP",
+      })
+      const metadata = provider.clientMetadata
+
+      assert.strictEqual(metadata.client_name, "Service MCP")
+      assert.deepStrictEqual(metadata.redirect_uris, [])
+      assert.deepStrictEqual(metadata.grant_types, ["client_credentials"])
     })
   })
 
@@ -181,6 +237,38 @@ describe("McpOAuthProvider", () => {
       const storedInfo = await provider.clientInformation()
       assert.strictEqual(storedInfo?.client_id, "new-client")
       assert.strictEqual(storedInfo?.client_secret, "new-secret")
+      assert.deepStrictEqual(getAuthForUrl(serverName, serverUrl)?.clientInfo?.redirectUris, ["http://localhost:3118/callback"])
+    })
+
+    it("should save the current redirect URL when registration omits redirect_uris", async () => {
+      const provider = new McpOAuthProvider("redirect-fallback", serverUrl, { redirectUri: "http://localhost:3118/custom" }, {
+        onRedirect: async () => {},
+      })
+
+      await provider.saveClientInformation({
+        client_id: "fallback-client",
+        client_secret: "fallback-secret",
+      } as OAuthClientInformationFull)
+
+      assert.deepStrictEqual(getAuthForUrl("redirect-fallback", serverUrl)?.clientInfo?.redirectUris, ["http://localhost:3118/custom"])
+    })
+
+    it("should return stored dynamic client info even when redirect URIs are stale", async () => {
+      const provider = new McpOAuthProvider("stale-redirect-client", serverUrl, { redirectUri: "http://localhost:3118/current" }, {
+        onRedirect: async () => {},
+      })
+      saveAuthEntry("stale-redirect-client", {
+        clientInfo: {
+          clientId: "stored-client",
+          clientSecret: "stored-secret",
+          redirectUris: ["http://localhost:19876/callback"],
+        },
+        serverUrl,
+      }, serverUrl)
+
+      const info = await provider.clientInformation()
+      assert.strictEqual(info?.client_id, "stored-client")
+      assert.strictEqual(info?.client_secret, "stored-secret")
     })
   })
 

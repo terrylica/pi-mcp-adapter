@@ -27,6 +27,7 @@ export interface StoredClientInfo {
   clientSecret?: string;
   clientIdIssuedAt?: number;
   clientSecretExpiresAt?: number;
+  redirectUris?: string[];
 }
 
 /** Complete auth entry for a server */

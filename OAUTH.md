@@ -56,7 +56,8 @@ You can optionally provide a pre-registered client:
       "oauth": {
         "clientId": "your-client-id",
         "clientSecret": "your-client-secret",
-        "scope": "read write"
+        "scope": "read write",
+        "redirectUri": "http://localhost:3118/callback"
       }
     }
   }
@@ -73,6 +74,11 @@ You can optionally provide a pre-registered client:
 - `oauth.clientId` - Pre-registered client ID (optional, SDK tries dynamic registration if not provided)
 - `oauth.clientSecret` - Client secret for confidential clients (optional)
 - `oauth.scope` - Requested OAuth scopes (optional)
+- `oauth.redirectUri` - Exact browser callback URI to advertise and bind, such as `http://localhost:3118/callback` (optional)
+- `oauth.clientName` - Client display name used for dynamic registration (optional, defaults to `Pi Coding Agent`)
+- `oauth.clientUri` - Client homepage URI used for dynamic registration (optional)
+
+Dynamic clients normally omit `oauth.redirectUri`; the adapter starts the callback server lazily on the default loopback host (`localhost`) and asks the OS for an available local port when auth begins. Use `oauth.redirectUri` when the provider requires a pre-registered callback, such as Slack MCP's Claude-compatible `http://localhost:3118/callback`. The URI must use `http://` with `localhost`, `127.0.0.1`, or `[::1]`, include an explicit port, and its host/path become the bound callback endpoint.
 
 ### Non-Interactive `client_credentials`
 
@@ -95,7 +101,7 @@ For machine-to-machine OAuth, configure `grantType: "client_credentials"`.
 }
 ```
 
-This flow does not open a browser or use callback handling.
+This flow does not open a browser or use callback handling. `oauth.redirectUri` is ignored for `client_credentials`; `oauth.clientName` and `oauth.clientUri` still apply to dynamic client registration metadata.
 
 ## Usage
 
@@ -110,7 +116,7 @@ Run the `/mcp-auth` command with the server name:
 Manual `/mcp-auth` is the default flow. If you set `settings.autoAuth: true`, proxy/direct tool execution will trigger OAuth automatically when a server returns `needs-auth`, then retry the original operation once.
 
 This will:
-1. Start the callback server (configured port, default `19876`)
+1. Start the callback server lazily on an OS-assigned local port, or on the exact `oauth.redirectUri` port for pre-registered callbacks
 2. Discover OAuth endpoints automatically
 3. Register a dynamic client (if no clientId provided)
 4. Open your browser for authentication
@@ -174,18 +180,21 @@ If no `clientId` is provided, the SDK:
 
 1. Discovers the registration endpoint from OAuth metadata
 2. Registers a new client with:
-   - `client_name`: "Pi Coding Agent"
-   - `redirect_uris`: `["http://localhost:<active-callback-port>/callback"]`
+   - `client_name`: configured `oauth.clientName` or "Pi Coding Agent"
+   - `client_uri`: configured `oauth.clientUri` or the adapter repository URL
+   - `redirect_uris`: `["http://localhost:<active-callback-port>/callback"]`, or the configured `oauth.redirectUri`
    - `grant_types`: `["authorization_code", "refresh_token"]`
-3. Stores the registered client credentials
+3. Stores the registered client credentials and the redirect URIs returned by the authorization server
+
+When a fresh browser auth starts, cached dynamic client info with tokens is re-registered if its stored redirect URIs are missing or do not include the current redirect URI. Token refresh does not perform this redirect check, so existing refresh-token grants keep working even after a callback setting changes.
 
 ### Callback Server
 
-A Node.js HTTP server runs on `localhost` at path `/callback`:
+A Node.js HTTP server runs on a loopback callback endpoint and handles the active callback path:
 
-- Preferred callback port is `19876` (or `MCP_OAUTH_CALLBACK_PORT` if set)
-- For dynamic registration, if the preferred port is busy, the adapter scans forward for a free local port
-- For pre-registered clients (`oauth.clientId`), the adapter requires the exact configured callback port
+- Dynamic registration starts the callback server only when auth begins, binds the default host `localhost`, and asks the OS for an available local port
+- Pre-registered clients (`oauth.clientId`) without `oauth.redirectUri` require the exact configured callback port from `MCP_OAUTH_CALLBACK_PORT` or the default `19876` on `localhost`
+- `oauth.redirectUri` binds the exact loopback host, port, and path from that URI and advertises the same URI to the provider
 
 - Handles `code`, `state`, and `error` parameters
 - Displays success/error HTML pages
@@ -206,7 +215,8 @@ Tokens are stored per-server in `~/.pi/agent/mcp-oauth/sha256-<server-hash>/toke
   },
   "clientInfo": {
     "clientId": "auto-registered-client-id",
-    "clientSecret": "auto-generated-secret"
+    "clientSecret": "auto-generated-secret",
+    "redirectUris": ["http://localhost:49152/callback"]
   },
   "serverUrl": "https://api.example.com/mcp"
 }
@@ -273,9 +283,9 @@ Some servers require pre-registered clients. Obtain a client ID from your OAuth 
 
 ### Callback server already in use
 
-For dynamic registration, if the preferred callback port is busy, the adapter scans for the next available local port.
+Dynamic browser OAuth uses a lazy OS-assigned port on the default loopback host (`localhost`), so the configured default port being busy should not block dynamic registration.
 
-For pre-registered OAuth clients (`oauth.clientId`), the callback redirect URI must match exactly. In that case, free the configured port or set `MCP_OAUTH_CALLBACK_PORT` to the registered port. For clients registered like Slack MCP's Claude-compatible `http://localhost:3118/callback`, set `MCP_OAUTH_CALLBACK_PORT=3118`.
+For pre-registered OAuth clients (`oauth.clientId`), the callback redirect URI must match exactly. Set `oauth.redirectUri` to the full registered callback, such as Slack MCP's Claude-compatible `http://localhost:3118/callback`, or free/set `MCP_OAUTH_CALLBACK_PORT` when you rely on the default `/callback` path without an explicit redirect URI.
 
 ### Browser doesn't open
 
