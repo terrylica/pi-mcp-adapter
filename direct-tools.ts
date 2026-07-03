@@ -7,6 +7,7 @@ import { lazyConnect, getFailureAgeSeconds } from "./init.ts";
 import { isServerCacheValid } from "./metadata-cache.ts";
 import { formatSchema } from "./tool-metadata.ts";
 import { transformMcpContent } from "./tool-registrar.ts";
+import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.ts";
 import { formatToolName, isToolExcluded } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
@@ -343,6 +344,8 @@ export function createDirectToolExecutor(
 
     let uiSession: UiSessionRuntime | null = null;
 
+    const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
+
     try {
       state.manager.touch(spec.serverName);
       state.manager.incrementInFlight(spec.serverName);
@@ -353,9 +356,10 @@ export function createDirectToolExecutor(
           type: "text" as const,
           text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
         }));
+        const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], outputGuardOptions);
         return {
-          content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }],
-          details: { server: spec.serverName, resourceUri: spec.resourceUri },
+          content: guarded.content,
+          details: { server: spec.serverName, resourceUri: spec.resourceUri, ...guardedMcpDetails(guarded) },
         };
       }
 
@@ -381,32 +385,32 @@ export function createDirectToolExecutor(
 
       const mcpContent = (result.content ?? []) as McpContent[];
       const content = transformMcpContent(mcpContent);
+      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
 
       if (result.isError) {
-        let errorText = content.filter(c => c.type === "text").map(c => (c as { text: string }).text).join("\n") || "Tool execution failed";
-        if (spec.inputSchema) {
-          errorText += `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}`;
-        }
+        const schemaText = spec.inputSchema ? `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}` : "";
+        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText });
         return {
-          content: [{ type: "text" as const, text: `Error: ${errorText}` }],
-          details: { error: "tool_error", server: spec.serverName },
+          content: guarded.content,
+          details: { error: "tool_error", server: spec.serverName, ...guardedMcpDetails(guarded) },
         };
       }
 
-      const resultText = content.filter(c => c.type === "text").map(c => (c as { text: string }).text).join("\n") || "(empty result)";
       if (hasUi) {
         const uiMessage = uiSession?.reused
           ? "Updated the open UI."
           : "📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.";
+        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiMessage}` });
         return {
-          content: [{ type: "text" as const, text: `${resultText}\n\n${uiMessage}` }],
-          details: { server: spec.serverName, tool: spec.originalName, uiOpen: true },
+          content: guarded.content,
+          details: { server: spec.serverName, tool: spec.originalName, uiOpen: true, ...guardedMcpDetails(guarded) },
         };
       }
 
+      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions });
       return {
-        content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }],
-        details: { server: spec.serverName, tool: spec.originalName },
+        content: guarded.content,
+        details: { server: spec.serverName, tool: spec.originalName, ...guardedMcpDetails(guarded) },
       };
     } catch (error) {
       if (error instanceof UrlElicitationRequiredError) {
@@ -422,13 +426,11 @@ export function createDirectToolExecutor(
       }
       const message = error instanceof Error ? error.message : String(error);
       uiSession?.sendToolCancelled(message);
-      let errorText = `Failed to call tool: ${message}`;
-      if (spec.inputSchema) {
-        errorText += `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}`;
-      }
+      const schemaText = spec.inputSchema ? `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}` : "";
+      const guarded = await guardMcpOutput([{ type: "text" as const, text: message }], { ...outputGuardOptions, prefix: "Failed to call tool: ", suffix: schemaText });
       return {
-        content: [{ type: "text" as const, text: errorText }],
-        details: { error: "call_failed", server: spec.serverName },
+        content: guarded.content,
+        details: { error: "call_failed", server: spec.serverName, ...guardedMcpDetails(guarded) },
       };
     } finally {
       if (uiSession?.reused) {
