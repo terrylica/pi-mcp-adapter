@@ -74,6 +74,41 @@ function fuzzyScore(query: string, text: string): number {
   return qi === lq.length ? score : 0;
 }
 
+function sanitizeDisplayText(text: string | null | undefined): string {
+  return (text ?? "")
+    .replace(/(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_])/g, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sanitizeRowContent(content: string): string {
+  let result = "";
+  let pendingSpace = false;
+  for (let i = 0; i < content.length; i++) {
+    const rest = content.slice(i);
+    const ansi = rest.match(/^(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_])/);
+    if (ansi) {
+      result += ansi[0];
+      i += ansi[0].length - 1;
+      continue;
+    }
+
+    const code = content.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) {
+      pendingSpace = true;
+      continue;
+    }
+
+    if (pendingSpace && result && !result.endsWith(" ")) {
+      result += " ";
+    }
+    pendingSpace = false;
+    result += content[i];
+  }
+  return result;
+}
+
 function estimateTokens(tool: CachedTool): number {
   const schemaLen = JSON.stringify(tool.inputSchema ?? {}).length;
   const descLen = tool.description?.length ?? 0;
@@ -522,11 +557,11 @@ class McpPanel {
       return;
     }
     if (this.keys.selectConfirm(data)) {
+      this.cleanup();
       if (this.discardSelected === 0) {
-        this.cleanup();
         this.done({ cancelled: true, changes: new Map() });
       } else {
-        this.confirmingDiscard = false;
+        this.done(this.buildResult());
       }
       return;
     }
@@ -600,7 +635,7 @@ class McpPanel {
     const inverse = (s: string) => `\x1b[7m${s}\x1b[27m`;
 
     const row = (content: string) =>
-      fg(t.border, "│") + truncateToWidth(" " + content, innerW, "…", true) + fg(t.border, "│");
+      fg(t.border, "│") + truncateToWidth(" " + sanitizeRowContent(content), innerW, "…", true) + fg(t.border, "│");
     const emptyRow = () => fg(t.border, "│") + " ".repeat(innerW) + fg(t.border, "│");
     const divider = () => fg(t.border, "├" + "─".repeat(innerW) + "┤");
 
@@ -681,8 +716,8 @@ class McpPanel {
         ? inverse(bold(fg(t.cancel, "  Discard  ")))
         : fg(t.hint, "  Discard  ");
       const keepBtn = this.discardSelected === 1
-        ? inverse(bold(fg(t.confirm, "  Keep  ")))
-        : fg(t.hint, "  Keep  ");
+        ? inverse(bold(fg(t.confirm, "  Keep & Close  ")))
+        : fg(t.hint, "  Keep & Close  ");
       lines.push(row(`Discard unsaved changes?  ${discardBtn}   ${keepBtn}`));
     } else {
       if (this.authOnly) {
@@ -750,8 +785,10 @@ class McpPanel {
     const expandIcon = server.expanded ? "▾" : "▸";
     const prefix = isCursor ? fg(t.selected, expandIcon) : fg(t.border, server.expanded ? expandIcon : "·");
 
-    const nameStr = isCursor ? bold(fg(t.selected, server.name)) : server.name;
-    const importLabel = server.source === "import" ? fg(t.description, ` (${server.importKind ?? "import"})`) : "";
+    const serverName = sanitizeDisplayText(server.name);
+    const importKind = sanitizeDisplayText(server.importKind ?? "import");
+    const nameStr = isCursor ? bold(fg(t.selected, serverName)) : serverName;
+    const importLabel = server.source === "import" ? fg(t.description, ` (${importKind})`) : "";
     const statusLabel = this.renderConnectionStatus(server);
 
     if (!server.hasCachedData && !this.authOnly) {
@@ -797,13 +834,15 @@ class McpPanel {
 
     const toggleIcon = tool.isDirect ? fg(t.direct, "●") : fg(t.description, "○");
     const cursor = isCursor ? fg(t.selected, "▸") : " ";
-    const nameStr = isCursor ? bold(fg(t.selected, tool.name)) : tool.name;
+    const toolName = sanitizeDisplayText(tool.name);
+    const description = sanitizeDisplayText(tool.description);
+    const nameStr = isCursor ? bold(fg(t.selected, toolName)) : toolName;
 
-    const prefixLen = 7 + visibleWidth(tool.name);
+    const prefixLen = 7 + visibleWidth(toolName);
     const maxDescLen = Math.max(0, innerW - prefixLen - 8);
     const descStr =
-      maxDescLen > 5 && tool.description
-        ? fg(t.description, "— " + truncateToWidth(tool.description, maxDescLen, "…"))
+      maxDescLen > 5 && description
+        ? fg(t.description, "— " + truncateToWidth(description, maxDescLen, "…"))
         : "";
 
     return `  ${cursor} ${toggleIcon} ${nameStr} ${descStr}`;
