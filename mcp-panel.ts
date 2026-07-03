@@ -76,6 +76,7 @@ function fuzzyScore(query: string, text: string): number {
 
 function sanitizeDisplayText(text: string | null | undefined): string {
   return (text ?? "")
+    .replace(/(?:\x1b\][\s\S]*?(?:\x07|\x1b\\)|\x9d[\s\S]*?(?:\x07|\x9c))/g, "")
     .replace(/(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_])/g, "")
     .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
     .replace(/\s+/g, " ")
@@ -87,6 +88,12 @@ function sanitizeRowContent(content: string): string {
   let pendingSpace = false;
   for (let i = 0; i < content.length; i++) {
     const rest = content.slice(i);
+    const osc = rest.match(/^(?:\x1b\][\s\S]*?(?:\x07|\x1b\\)|\x9d[\s\S]*?(?:\x07|\x9c))/);
+    if (osc) {
+      i += osc[0].length - 1;
+      continue;
+    }
+
     const ansi = rest.match(/^(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_])/);
     if (ansi) {
       result += ansi[0];
@@ -430,7 +437,7 @@ class McpPanel {
         const tool = server.tools[item.toolIndex];
         tool.isDirect = !tool.isDirect;
         if (tool.isDirect && server.source === "import") {
-          this.importNotice = `Imported from ${server.importKind ?? "external"} — will copy to user config on save`;
+          this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to user config on save`;
         }
         this.updateDirty();
       }
@@ -461,8 +468,9 @@ class McpPanel {
         this.tui.requestRender();
       }).catch((error) => {
         server.connectionStatus = "failed";
-        const message = error instanceof Error ? error.message : String(error);
-        this.authNotice = `Reconnect failed for ${server.name}: ${message}`;
+        const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
+        const serverName = sanitizeDisplayText(server.name);
+        this.authNotice = `Reconnect failed for ${serverName}: ${message}`;
         this.tui.requestRender();
       });
       return;
@@ -502,26 +510,28 @@ class McpPanel {
 
   private authenticateServer(server: ServerState): void {
     if (this.authInFlight) return;
+    const serverName = sanitizeDisplayText(server.name);
     if (!this.callbacks.canAuthenticate(server.name)) {
-      this.authNotice = `${server.name} does not use OAuth authentication.`;
+      this.authNotice = `${serverName} does not use OAuth authentication.`;
       return;
     }
 
     this.authInFlight = server.name;
-    this.authNotice = `Authenticating ${server.name}...`;
+    this.authNotice = `Authenticating ${serverName}...`;
     this.tui.requestRender();
 
     this.callbacks.authenticate(server.name).then((result) => {
       server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
+      const message = sanitizeDisplayText(result.message);
       this.authNotice = result.ok
-        ? `OAuth finished for ${server.name}. Run reconnect if it is still idle.`
-        : `OAuth failed for ${server.name}${result.message ? `: ${result.message}` : ". Check the notification for details."}`;
+        ? `OAuth finished for ${serverName}. Run reconnect if it is still idle.`
+        : `OAuth failed for ${serverName}${message ? `: ${message}` : ". Check the notification for details."}`;
       this.authInFlight = null;
       this.tui.requestRender();
     }).catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
       server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
-      this.authNotice = `OAuth failed for ${server.name}: ${message}`;
+      this.authNotice = `OAuth failed for ${serverName}: ${message}`;
       this.authInFlight = null;
       this.tui.requestRender();
     });
@@ -533,14 +543,14 @@ class McpPanel {
     if (item.type === "server") {
       const newState = !server.tools.every((t) => t.isDirect);
       if (server.source === "import" && newState) {
-        this.importNotice = `Imported from ${server.importKind ?? "external"} — will copy to user config on save`;
+        this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to user config on save`;
       }
       for (const t of server.tools) t.isDirect = newState;
     } else if (item.toolIndex !== undefined) {
       const tool = server.tools[item.toolIndex];
       tool.isDirect = !tool.isDirect;
       if (tool.isDirect && server.source === "import") {
-        this.importNotice = `Imported from ${server.importKind ?? "external"} — will copy to user config on save`;
+        this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to user config on save`;
       }
     }
     this.updateDirty();
@@ -660,7 +670,7 @@ class McpPanel {
     lines.push(emptyRow());
     if (this.noticeLines.length > 0) {
       for (const notice of this.noticeLines) {
-        lines.push(row(fg(t.hint, italic(notice))));
+        lines.push(row(fg(t.hint, italic(sanitizeDisplayText(notice)))));
       }
       lines.push(emptyRow());
     }
@@ -699,11 +709,11 @@ class McpPanel {
       }
 
       if (this.importNotice) {
-        lines.push(row(fg(t.needsAuth, italic(this.importNotice))));
+        lines.push(row(fg(t.needsAuth, italic(sanitizeDisplayText(this.importNotice)))));
         lines.push(emptyRow());
       }
       if (this.authNotice) {
-        lines.push(row(fg(t.needsAuth, italic(this.authNotice))));
+        lines.push(row(fg(t.needsAuth, italic(sanitizeDisplayText(this.authNotice)))));
         lines.push(emptyRow());
       }
     }

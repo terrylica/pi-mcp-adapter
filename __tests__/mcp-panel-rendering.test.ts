@@ -35,7 +35,7 @@ function createCache(config: McpConfig): MetadataCache {
         tools: [
           {
             name: "search\u0007issues",
-            description: "Search\r\n\x1b[31missues\x1b[0m\tby query\u0000now",
+            description: "Search\r\n\x1b[31m\x1b]8;;https://example.invalid/issues\x1b\\issues\x1b]8;;\x1b\\\x1b[0m\tby query\u0000now",
           },
           { name: "list_projects", description: "List projects" },
         ],
@@ -66,6 +66,28 @@ describe("mcp-panel rendering", () => {
     expect(output).toContain("Search issues by query now");
     expect(lines.some((line) => /[\r\n\u0000-\u001f\u007f-\u009f]/.test(stripAnsi(line)))).toBe(false);
     expect(output).not.toContain("[31m");
+    expect(output).not.toContain("\x1b]");
+    expect(output).not.toContain("https://example.invalid/issues");
+    panel.dispose();
+  });
+
+  it("sanitizes OSC sequences in notice lines before styling", () => {
+    const config = createConfig();
+    const panel = createMcpPanel(
+      config,
+      createCache(config),
+      new Map(),
+      createCallbacks(),
+      { requestRender: () => {} },
+      () => {},
+      { noticeLines: ["Open \x1b]8;;https://example.invalid/notice\x07docs\x1b]8;;\x07 now"] },
+    );
+
+    const output = stripAnsi(panel.render(120).join("\n"));
+
+    expect(output).toContain("Open docs now");
+    expect(output).not.toContain("\x1b]");
+    expect(output).not.toContain("https://example.invalid/notice");
     panel.dispose();
   });
 
