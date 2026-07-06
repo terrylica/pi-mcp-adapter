@@ -325,30 +325,39 @@ export async function maybeStartUiSession(
 
     state.uiServer = handle;
 
-    const glimpseDetected = isGlimpseAvailable();
     const viewerPref = process.env.MCP_UI_VIEWER?.toLowerCase();
-    const useGlimpse = viewerPref === "glimpse" ||
-      (viewerPref !== "browser" && glimpseDetected);
+    const uiSuppressed = viewerPref === "none" || viewerPref === "off" || viewerPref === "disabled";
 
-    if (useGlimpse) {
-      try {
-        const glimpseHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden}iframe{width:100%;height:100%;border:none}</style></head><body><iframe src="${handle.url}"></iframe></body></html>`;
-        activeGlimpseWindow = await openGlimpseWindow(glimpseHtml, {
-          title: `MCP · ${request.serverName} · ${request.toolName}`,
-          width: 1000,
-          height: 800,
-          onClosed: () => {
-            if (active) handle.close("glimpse-closed");
-          },
-        });
-      } catch (error) {
-        log.debug("Glimpse unavailable, using browser", {
-          error: error instanceof Error ? error.message : String(error),
-        });
+    if (uiSuppressed) {
+      // MCP_UI_VIEWER=none: run the tool + UI server (so streaming/results still work)
+      // but do NOT open a browser or native Glimpse window. Notify inline with the URL.
+      state.ui?.notify(`MCP UI suppressed (MCP_UI_VIEWER=${viewerPref}). Tool still ran. UI URL: ${handle.url}`, "info");
+      log.info("Suppressing MCP UI window (MCP_UI_VIEWER=" + viewerPref + ")", { url: handle.url });
+    } else {
+      const glimpseDetected = isGlimpseAvailable();
+      const useGlimpse = viewerPref === "glimpse" ||
+        (viewerPref !== "browser" && glimpseDetected);
+
+      if (useGlimpse) {
+        try {
+          const glimpseHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden}iframe{width:100%;height:100%;border:none}</style></head><body><iframe src="${handle.url}"></iframe></body></html>`;
+          activeGlimpseWindow = await openGlimpseWindow(glimpseHtml, {
+            title: `MCP · ${request.serverName} · ${request.toolName}`,
+            width: 1000,
+            height: 800,
+            onClosed: () => {
+              if (active) handle.close("glimpse-closed");
+            },
+          });
+        } catch (error) {
+          log.debug("Glimpse unavailable, using browser", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          await openInBrowser(state, handle.url);
+        }
+      } else {
         await openInBrowser(state, handle.url);
       }
-    } else {
-      await openInBrowser(state, handle.url);
     }
 
     return {
