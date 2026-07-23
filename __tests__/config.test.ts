@@ -264,9 +264,9 @@ describe("config discovery", () => {
     expect(JSON.stringify(entry)).not.toContain("LITELLM_API_KEY");
   });
 
-  // Per-field coverage for every member of URL_BOUND_AUTH_FIELDS beyond
-  // headers/bearerTokenEnv — guards against a regression that silently drops a
-  // field from the strip set while the other tests stay green.
+  // Per-field coverage for each URL-bound auth shape beyond headers and
+  // bearerTokenEnv — guards against regressions where one credential path keeps
+  // leaking while the other tests stay green.
   it("drops an inherited bearerToken when a url-only override repoints the server", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-bt-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-bt-project-"));
@@ -303,6 +303,17 @@ describe("config discovery", () => {
     expect(entry).toEqual({ url: URL_B });
     expect(entry.oauth).toBeUndefined();
     expect(JSON.stringify(entry)).not.toContain("oauth-client-secret");
+  });
+
+  it("preserves inherited oauth false when a url-only override repoints the server", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-oauth-false-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-oauth-false-project-"));
+    writeBakedAndOverride(home, project, { url: URL_A, oauth: false }, { url: URL_B });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    expect(config.mcpServers.litellm).toEqual({ url: URL_B, oauth: false });
   });
 
   // Three-source laundering: the accumulated (folded) entry's url — not just a
