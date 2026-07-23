@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   lazyConnect: vi.fn(),
   updateServerMetadata: vi.fn(),
   updateMetadataCache: vi.fn(),
+  markKeepAliveAfterConnect: vi.fn(),
   getFailureAgeSeconds: vi.fn(),
   updateStatusBar: vi.fn(),
 }));
@@ -22,6 +23,7 @@ vi.mock("../init.ts", () => ({
   lazyConnect: mocks.lazyConnect,
   updateServerMetadata: mocks.updateServerMetadata,
   updateMetadataCache: mocks.updateMetadataCache,
+  markKeepAliveAfterConnect: mocks.markKeepAliveAfterConnect,
   getFailureAgeSeconds: mocks.getFailureAgeSeconds,
   updateStatusBar: mocks.updateStatusBar,
 }));

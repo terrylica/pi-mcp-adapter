@@ -1,5 +1,11 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { lazyConnect } from "../init.ts";
 import { McpLifecycleManager } from "../lifecycle.ts";
+import { executeCall } from "../proxy-modes.ts";
+import { reconnectServers } from "../commands.ts";
 import type { ServerDefinition } from "../types.ts";
 
 interface FakeConnection {
@@ -46,16 +52,26 @@ function makeDefinition(lifecycle: ServerDefinition["lifecycle"]): ServerDefinit
 }
 
 describe("lazy-keep-alive lifecycle", () => {
+  const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+  let tempAgentDir: string;
   let fake: FakeManager;
   let lifecycle: McpLifecycleManager;
 
   beforeEach(() => {
+    tempAgentDir = mkdtempSync(join(tmpdir(), "pi-mcp-lifecycle-"));
+    process.env.PI_CODING_AGENT_DIR = tempAgentDir;
     fake = new FakeManager();
     lifecycle = new McpLifecycleManager(fake as never);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    if (originalAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    }
+    rmSync(tempAgentDir, { recursive: true, force: true });
   });
 
   it("reconnects after first spawn when the process dies", async () => {
@@ -95,5 +111,109 @@ describe("lazy-keep-alive lifecycle", () => {
     await (lifecycle as never as { checkConnections: () => Promise<void> }).checkConnections();
 
     expect(fake.closeCalls).toContain("srv");
+  });
+
+  it("marks lazyConnect first spawns for health-check reconnects", async () => {
+    const connection = {
+      status: "connected" as const,
+      tools: [],
+      resources: [],
+    };
+    let current: typeof connection | undefined;
+    const manager = {
+      getConnection: vi.fn(() => current),
+      connect: vi.fn(async () => {
+        current = connection;
+        return connection;
+      }),
+      isIdle: vi.fn(() => false),
+    };
+    const state = {
+      config: { settings: {}, mcpServers: { srv: makeDefinition("lazy-keep-alive") } },
+      manager,
+      lifecycle: new McpLifecycleManager(manager as never),
+      toolMetadata: new Map(),
+      serverInstructions: new Map(),
+      failureTracker: new Map(),
+    } as never;
+
+    await lazyConnect(state, "srv");
+    current = undefined;
+    await (state as any).lifecycle.checkConnections();
+
+    expect(manager.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it("marks cached proxy first-use connects for health-check reconnects", async () => {
+    const connection = {
+      status: "connected" as const,
+      tools: [{ name: "search", description: "Search", inputSchema: { type: "object" } }],
+      resources: [],
+      client: { callTool: vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] })) },
+    };
+    let current: typeof connection | undefined;
+    const manager = {
+      getConnection: vi.fn(() => current),
+      connect: vi.fn(async () => {
+        current = connection;
+        return connection;
+      }),
+      isIdle: vi.fn(() => false),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+      getRequestOptions: vi.fn(() => undefined),
+    };
+    const state = {
+      config: { settings: { toolPrefix: "server" }, mcpServers: { srv: makeDefinition("lazy-keep-alive") } },
+      manager,
+      lifecycle: new McpLifecycleManager(manager as never),
+      toolMetadata: new Map([["srv", [{ name: "srv_search", originalName: "search", description: "Search" }]]]),
+      serverInstructions: new Map(),
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as never;
+
+    const result = await executeCall(state, "srv_search", {}, "srv");
+    expect(result.content[0]?.text).toBe("ok");
+
+    current = undefined;
+    await (state as any).lifecycle.checkConnections();
+
+    expect(manager.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it("marks manual reconnects for lazy-keep-alive servers", async () => {
+    const connection = {
+      status: "connected" as const,
+      tools: [],
+      resources: [],
+    };
+    let current: typeof connection | undefined;
+    const manager = {
+      close: vi.fn(async () => {
+        current = undefined;
+      }),
+      getConnection: vi.fn(() => current),
+      connect: vi.fn(async () => {
+        current = connection;
+        return connection;
+      }),
+      isIdle: vi.fn(() => false),
+    };
+    const state = {
+      config: { settings: {}, mcpServers: { srv: makeDefinition("lazy-keep-alive") } },
+      manager,
+      lifecycle: new McpLifecycleManager(manager as never),
+      toolMetadata: new Map(),
+      serverInstructions: new Map(),
+      failureTracker: new Map(),
+    } as never;
+
+    await reconnectServers(state, { hasUI: false } as never, "srv");
+    current = undefined;
+    await (state as any).lifecycle.checkConnections();
+
+    expect(manager.connect).toHaveBeenCalledTimes(2);
   });
 });

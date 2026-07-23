@@ -12,7 +12,7 @@ import {
   writeSharedServerEntry,
   writeStarterProjectConfig,
 } from "./config.ts";
-import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.ts";
+import { lazyConnect, markKeepAliveAfterConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.ts";
 import { loadMetadataCache } from "./metadata-cache.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth } from "./mcp-auth-flow.ts";
@@ -118,6 +118,7 @@ export async function reconnectServers(
         state.serverInstructions.delete(name);
       }
       updateMetadataCache(state, name);
+      markKeepAliveAfterConnect(state, name);
       state.failureTracker.delete(name);
 
       if (ctx.hasUI) {

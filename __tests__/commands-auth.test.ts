@@ -14,6 +14,7 @@ vi.mock("../mcp-auth-flow.ts", () => ({
 vi.mock("../init.ts", () => ({
   getFailureAgeSeconds: vi.fn(() => null),
   lazyConnect: vi.fn(),
+  markKeepAliveAfterConnect: vi.fn(),
   updateMetadataCache: vi.fn(),
   updateStatusBar: vi.fn(),
 }));

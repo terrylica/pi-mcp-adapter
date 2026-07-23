@@ -166,6 +166,7 @@ export async function initializeMcp(
       serverInstructions.delete(name);
     }
     updateMetadataCache(state, name);
+    markKeepAliveAfterConnect(state, name);
 
     if (failedTools.length > 0 && ctx.hasUI) {
       ctx.ui.notify(
@@ -203,6 +204,7 @@ export async function initializeMcp(
             }
             updateServerMetadata(state, name);
             updateMetadataCache(state, name);
+            markKeepAliveAfterConnect(state, name);
             return { name, ok: true };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -234,6 +236,13 @@ export async function initializeMcp(
   lifecycle.startHealthChecks();
 
   return state;
+}
+
+export function markKeepAliveAfterConnect(state: McpExtensionState, serverName: string): void {
+  const definition = state.config.mcpServers[serverName];
+  if ((definition?.lifecycle ?? "lazy") === "lazy-keep-alive") {
+    state.lifecycle.markKeepAlive(serverName, definition);
+  }
 }
 
 export function updateServerMetadata(state: McpExtensionState, serverName: string): void {
@@ -323,6 +332,7 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
   }
   if (connection?.status === "connected") {
     updateServerMetadata(state, serverName);
+    markKeepAliveAfterConnect(state, serverName);
     return true;
   }
 
@@ -343,10 +353,8 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
     state.failureTracker.delete(serverName);
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
+    markKeepAliveAfterConnect(state, serverName);
     updateStatusBar(state);
-    if ((definition.lifecycle ?? "lazy") === "lazy-keep-alive") {
-      state.lifecycle.markKeepAlive(serverName, definition);
-    }
     return true;
   } catch (error) {
     if (signal?.aborted) {
