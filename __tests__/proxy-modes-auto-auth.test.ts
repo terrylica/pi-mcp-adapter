@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   lazyConnect: vi.fn(),
   updateServerMetadata: vi.fn(),
   updateMetadataCache: vi.fn(),
+  markKeepAliveAfterConnect: vi.fn(),
   getFailureAgeSeconds: vi.fn(),
   updateStatusBar: vi.fn(),
   clients: [] as any[],
@@ -25,6 +26,7 @@ vi.mock("../init.ts", () => ({
   lazyConnect: mocks.lazyConnect,
   updateServerMetadata: mocks.updateServerMetadata,
   updateMetadataCache: mocks.updateMetadataCache,
+  markKeepAliveAfterConnect: mocks.markKeepAliveAfterConnect,
   getFailureAgeSeconds: mocks.getFailureAgeSeconds,
   updateStatusBar: mocks.updateStatusBar,
 }));
@@ -87,6 +89,7 @@ describe("proxy auto auth", () => {
     mocks.lazyConnect.mockReset().mockResolvedValue(false);
     mocks.updateServerMetadata.mockReset();
     mocks.updateMetadataCache.mockReset();
+    mocks.markKeepAliveAfterConnect.mockReset();
     mocks.getFailureAgeSeconds.mockReset().mockReturnValue(null);
     mocks.updateStatusBar.mockReset();
     mocks.clients.length = 0;

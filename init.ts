@@ -104,7 +104,8 @@ export async function initializeMcp(
 
   for (const [name, definition] of serverEntries) {
     const lifecycleMode = definition.lifecycle ?? "lazy";
-    const idleOverride = definition.idleTimeout ?? (lifecycleMode === "eager" ? 0 : undefined);
+    const persistsAfterFirstSpawn = lifecycleMode === "eager" || lifecycleMode === "lazy-keep-alive";
+    const idleOverride = definition.idleTimeout ?? (persistsAfterFirstSpawn ? 0 : undefined);
     lifecycle.registerServer(
       name,
       definition,
@@ -165,6 +166,7 @@ export async function initializeMcp(
       serverInstructions.delete(name);
     }
     updateMetadataCache(state, name);
+    markKeepAliveAfterConnect(state, name);
 
     if (failedTools.length > 0 && ctx.hasUI) {
       ctx.ui.notify(
@@ -202,6 +204,7 @@ export async function initializeMcp(
             }
             updateServerMetadata(state, name);
             updateMetadataCache(state, name);
+            markKeepAliveAfterConnect(state, name);
             return { name, ok: true };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -233,6 +236,13 @@ export async function initializeMcp(
   lifecycle.startHealthChecks();
 
   return state;
+}
+
+export function markKeepAliveAfterConnect(state: McpExtensionState, serverName: string): void {
+  const definition = state.config.mcpServers[serverName];
+  if ((definition?.lifecycle ?? "lazy") === "lazy-keep-alive") {
+    state.lifecycle.markKeepAlive(serverName, definition);
+  }
 }
 
 export function updateServerMetadata(state: McpExtensionState, serverName: string): void {
@@ -322,6 +332,7 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
   }
   if (connection?.status === "connected") {
     updateServerMetadata(state, serverName);
+    markKeepAliveAfterConnect(state, serverName);
     return true;
   }
 
@@ -342,6 +353,7 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
     state.failureTracker.delete(serverName);
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
+    markKeepAliveAfterConnect(state, serverName);
     updateStatusBar(state);
     return true;
   } catch (error) {
@@ -363,6 +375,6 @@ function getEffectiveIdleTimeoutMinutes(state: McpExtensionState, serverName: st
   }
   if (typeof definition.idleTimeout === "number") return definition.idleTimeout;
   const mode = definition.lifecycle ?? "lazy";
-  if (mode === "eager") return 0;
+  if (mode === "eager" || mode === "lazy-keep-alive") return 0;
   return typeof state.config.settings?.idleTimeout === "number" ? state.config.settings.idleTimeout : 10;
 }

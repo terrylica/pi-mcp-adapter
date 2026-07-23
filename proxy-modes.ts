@@ -4,7 +4,7 @@ import { checkSync } from "recheck";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
 import { getServerPrefix, parseUiPromptHandoff } from "./types.ts";
-import { lazyConnect, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar } from "./init.ts";
+import { lazyConnect, markKeepAliveAfterConnect, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpContent } from "./tool-registrar.ts";
@@ -612,6 +612,7 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
       state.serverInstructions.delete(serverName);
     }
     updateMetadataCache(state, serverName);
+    markKeepAliveAfterConnect(state, serverName);
     state.failureTracker.delete(serverName);
     updateStatusBar(state);
     return executeList(state, serverName);
@@ -855,6 +856,7 @@ export async function executeCall(
       state.failureTracker.delete(serverName);
       updateServerMetadata(state, serverName);
       updateMetadataCache(state, serverName);
+      markKeepAliveAfterConnect(state, serverName);
       updateStatusBar(state);
       toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
       if (!toolMeta) {
