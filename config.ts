@@ -704,33 +704,13 @@ export function writeDirectToolsConfig(
   }
 }
 
-// ---- Project-level OAuth directory resolution ----
-
-let cachedOAuthDir: { dir: string | undefined; ts: number } | undefined;
-const OAUTH_DIR_CACHE_TTL = 5_000; // 5 seconds
-
-/**
- * Get the resolved OAuth token storage directory from the merged MCP config.
- * Returns undefined when no oauthDir is configured, meaning the default
- * agent mcp-oauth/ directory should be used.
- *
- * Priority: MCP_OAUTH_DIR env var > config oauthDir.
- * Callers should also check the env var themselves.
- */
-export function getResolvedOAuthDir(cwd?: string): string | undefined {
-  const now = Date.now();
-  if (cachedOAuthDir && now - cachedOAuthDir.ts < OAUTH_DIR_CACHE_TTL) {
-    return cachedOAuthDir.dir;
+export function resolveConfiguredOAuthDir(raw: unknown, cwd = process.cwd()): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string") {
+    throw new Error("settings.oauthDir must be a string");
   }
 
-  const config = loadMcpConfig(undefined, cwd);
-  const raw = config.settings?.oauthDir;
-  if (!raw) {
-    cachedOAuthDir = { dir: undefined, ts: now };
-    return undefined;
-  }
-
-  const dir = raw.startsWith('/') ? raw : resolve(cwd ?? process.cwd(), raw);
-  cachedOAuthDir = { dir, ts: now };
-  return dir;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return resolve(cwd, trimmed);
 }
