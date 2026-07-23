@@ -114,7 +114,13 @@ export function isServerCacheValid(
   definition: ServerEntry,
   maxAgeMs: number = CACHE_MAX_AGE_MS
 ): boolean {
-  if (!entry || entry.configHash !== computeServerHash(definition)) return false;
+  let configHash: string;
+  try {
+    configHash = computeServerHash(definition);
+  } catch {
+    return false;
+  }
+  if (!entry || entry.configHash !== configHash) return false;
   if (!entry.cachedAt || typeof entry.cachedAt !== "number") return false;
   if (maxAgeMs > 0 && Date.now() - entry.cachedAt > maxAgeMs) return false;
   return true;

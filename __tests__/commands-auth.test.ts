@@ -46,6 +46,31 @@ describe("authenticateServer", () => {
     }
   });
 
+  it("fails OAuth authentication before requests when URL variables are missing", async () => {
+    const originalUrl = process.env.MCP_AUTH_URL;
+    delete process.env.MCP_AUTH_URL;
+    mocks.authenticate.mockClear();
+    const ui = { notify: vi.fn(), setStatus: vi.fn() };
+    const { authenticateServer } = await import("../commands.ts");
+
+    try {
+      const result = await authenticateServer("sentry", {
+        mcpServers: { sentry: { url: "https://${MCP_AUTH_URL}/mcp", auth: "oauth" } },
+      }, { hasUI: true, ui } as any);
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toBe("Missing environment variable in MCP server URL: MCP_AUTH_URL");
+      expect(mocks.authenticate).not.toHaveBeenCalled();
+      expect(ui.notify).toHaveBeenCalledWith(
+        'Failed to authenticate "sentry": Missing environment variable in MCP server URL: MCP_AUTH_URL',
+        "error",
+      );
+    } finally {
+      if (originalUrl === undefined) delete process.env.MCP_AUTH_URL;
+      else process.env.MCP_AUTH_URL = originalUrl;
+    }
+  });
+
   it("surfaces the exact OAuth URL through UI notification", async () => {
     const authorizationUrl = "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
     mocks.authenticate.mockImplementationOnce(async (_name, _url, _definition, options) => {

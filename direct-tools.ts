@@ -49,8 +49,18 @@ async function attemptDirectAutoAuth(
   }
 
   const definition = state.config.mcpServers[serverName];
-  const serverUrl = definition ? resolveServerUrl(definition) : undefined;
-  if (!definition || !supportsOAuth(definition) || !serverUrl) {
+  if (!definition || !supportsOAuth(definition)) {
+    return { status: "skipped" };
+  }
+
+  let serverUrl: string | undefined;
+  try {
+    serverUrl = resolveServerUrl(definition);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { status: "failed", message: getDirectAuthFailedMessage(state, serverName, message) };
+  }
+  if (!serverUrl) {
     return { status: "skipped" };
   }
 

@@ -166,14 +166,14 @@ export async function authenticateServer(
     return { ok: false, message };
   }
 
-  const serverUrl = resolveServerUrl(definition);
-  if (!serverUrl) {
-    const message = `Server "${serverName}" has no URL configured (OAuth requires HTTP transport)`;
-    ctx.ui.notify(message, "error");
-    return { ok: false, message };
-  }
-
   try {
+    const serverUrl = resolveServerUrl(definition);
+    if (!serverUrl) {
+      const message = `Server "${serverName}" has no URL configured (OAuth requires HTTP transport)`;
+      ctx.ui.notify(message, "error");
+      return { ok: false, message };
+    }
+
     ctx.ui.setStatus("mcp-auth", `Authenticating ${serverName}...`);
     const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, ctx.cwd);
     const status = await authenticate(serverName, serverUrl, definition, {
@@ -332,7 +332,12 @@ function buildMcpPanelCallbacks(
       if (connection?.status === "needs-auth") {
         return "needs-auth";
       }
-      const serverUrl = definition ? resolveServerUrl(definition) : undefined;
+      let serverUrl: string | undefined;
+      try {
+        serverUrl = definition ? resolveServerUrl(definition) : undefined;
+      } catch {
+        return "failed";
+      }
       if (
         definition?.auth === "oauth"
         && serverUrl

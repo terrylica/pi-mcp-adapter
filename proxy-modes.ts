@@ -87,8 +87,18 @@ async function attemptAutoAuth(
   }
 
   const definition = state.config.mcpServers[serverName];
-  const serverUrl = definition ? resolveServerUrl(definition) : undefined;
-  if (!definition || !supportsOAuth(definition) || !serverUrl) {
+  if (!definition || !supportsOAuth(definition)) {
+    return { status: "skipped" };
+  }
+
+  let serverUrl: string | undefined;
+  try {
+    serverUrl = resolveServerUrl(definition);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { status: "failed", message: getAuthFailedMessage(state, serverName, message) };
+  }
+  if (!serverUrl) {
     return { status: "skipped" };
   }
 
@@ -263,15 +273,15 @@ export async function executeAuthStart(state: McpExtensionState, serverName: str
     };
   }
 
-  const serverUrl = resolveServerUrl(definition);
-  if (!serverUrl || !supportsOAuth(definition)) {
-    return {
-      content: [{ type: "text" as const, text: `Server "${serverName}" is not configured for OAuth over HTTP.` }],
-      details: { mode: "auth-start", error: "oauth_not_supported", server: serverName },
-    };
-  }
-
   try {
+    const serverUrl = resolveServerUrl(definition);
+    if (!serverUrl || !supportsOAuth(definition)) {
+      return {
+        content: [{ type: "text" as const, text: `Server "${serverName}" is not configured for OAuth over HTTP.` }],
+        details: { mode: "auth-start", error: "oauth_not_supported", server: serverName },
+      };
+    }
+
     const { authorizationUrl } = state.authStorageOptions
       ? await startAuth(serverName, serverUrl, definition, { authStorageOptions: state.authStorageOptions })
       : await startAuth(serverName, serverUrl, definition);
