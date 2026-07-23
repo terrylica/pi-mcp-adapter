@@ -11,7 +11,7 @@ interface RenderTheme {
 
 export interface McpProxyToolCallInput {
   tool?: string;
-  args?: string;
+  args?: string | Record<string, unknown>;
   connect?: string;
   describe?: string;
   search?: string;

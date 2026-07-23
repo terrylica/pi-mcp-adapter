@@ -260,7 +260,13 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       renderCall: renderMcpProxyToolCall,
       parameters: Type.Object({
         tool: Type.Optional(Type.String({ description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
-        args: Type.Optional(Type.String({ description: "Arguments as JSON string (e.g., '{\"key\": \"value\"}')" })),
+        args: Type.Optional(Type.Union([
+          Type.String({ description: "Arguments as a JSON string (e.g., '{\"key\": \"value\"}')" }),
+          Type.Object({}, {
+            additionalProperties: true,
+            description: 'Arguments as a JSON object (e.g., { "key": "value" })',
+          }),
+        ], { description: "Tool arguments as a JSON object, or as a JSON string encoding one" })),
         connect: Type.Optional(Type.String({ description: "Server name to connect (lazy connect + metadata refresh)" })),
         describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
         instructions: Type.Optional(Type.String({ description: "Server name to show that server's usage instructions" })),
@@ -273,7 +279,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       renderResult: renderMcpToolResult,
       async execute(_toolCallId, params: {
         tool?: string;
-        args?: string;
+        args?: string | Record<string, unknown>;
         connect?: string;
         describe?: string;
         instructions?: string;
@@ -284,19 +290,26 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         action?: string;
       }, signal, _onUpdate, _ctx) {
         let parsedArgs: Record<string, unknown> | undefined;
-        if (params.args) {
-          try {
-            parsedArgs = JSON.parse(params.args);
-            if (typeof parsedArgs !== "object" || parsedArgs === null || Array.isArray(parsedArgs)) {
-              const gotType = Array.isArray(parsedArgs) ? "array" : parsedArgs === null ? "null" : typeof parsedArgs;
-              throw new Error(`Invalid args: expected a JSON object, got ${gotType}`);
+        if (params.args !== undefined && params.args !== "") {
+          let args: unknown;
+          if (typeof params.args === "string") {
+            try {
+              args = JSON.parse(params.args);
+            } catch (error) {
+              if (error instanceof SyntaxError) {
+                throw new Error(`Invalid args JSON: ${error.message}`, { cause: error });
+              }
+              throw error;
             }
-          } catch (error) {
-            if (error instanceof SyntaxError) {
-              throw new Error(`Invalid args JSON: ${error.message}`, { cause: error });
-            }
-            throw error;
+          } else {
+            args = params.args;
           }
+
+          if (typeof args !== "object" || args === null || Array.isArray(args)) {
+            const gotType = Array.isArray(args) ? "array" : args === null ? "null" : typeof args;
+            throw new Error(`Invalid args: expected a JSON object, got ${gotType}`);
+          }
+          parsedArgs = args as Record<string, unknown>;
         }
 
         if (!state && initPromise) {

@@ -71,9 +71,9 @@ function formatManualAuthInstructions(serverName: string, authorizationUrl: stri
     authorizationUrl,
     "",
     "After approving, copy the full redirected localhost URL from your browser address bar and send it back with:",
-    `mcp({ action: "auth-complete", server: "${serverName}", args: '{"redirectUrl":"PASTE_REDIRECT_URL_HERE"}' })`,
+    `mcp({ action: "auth-complete", server: "${serverName}", args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" } })`,
     "",
-    "You can also pass just the `code` query parameter as `args: '{\"code\":\"PASTE_CODE_HERE\"}'`.",
+    'You can also pass just the `code` query parameter as `args: { code: "PASTE_CODE_HERE" }`. JSON-string args remain supported.',
     portNote.trimEnd(),
   ].filter(Boolean).join("\n");
 }

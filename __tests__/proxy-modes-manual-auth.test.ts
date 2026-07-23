@@ -65,6 +65,9 @@ describe("manual OAuth proxy actions", () => {
     expect(result.content[0].text).toContain("Open this URL in your local browser");
     expect(result.content[0].text).toContain("https://auth.example.com/authorize");
     expect(result.content[0].text).toContain("auth-complete");
+    expect(result.content[0].text).toContain('args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" }');
+    expect(result.content[0].text).toContain('args: { code: "PASTE_CODE_HERE" }');
+    expect(result.content[0].text).toContain("JSON-string args remain supported");
     expect(result.details).toMatchObject({ mode: "auth-start", server: "demo" });
   });
 

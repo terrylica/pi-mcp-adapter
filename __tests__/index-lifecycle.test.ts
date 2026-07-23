@@ -268,6 +268,51 @@ describe("mcpAdapter session lifecycle", () => {
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp" }));
   });
 
+  it("registers proxy args as string or object without patternProperties", async () => {
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api } = createPi();
+    mcpAdapter(api);
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    expect(proxyTool).toBeDefined();
+
+    const argsSchema = proxyTool.parameters.properties.args;
+    expect(argsSchema.anyOf).toEqual([
+      expect.objectContaining({ type: "string" }),
+      expect.objectContaining({ type: "object", additionalProperties: true }),
+    ]);
+    expect(JSON.stringify(argsSchema)).not.toContain("patternProperties");
+  });
+
+  it("forwards native object proxy args into executeCall", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    expect(proxyTool).toBeDefined();
+
+    await proxyTool.execute("call-1", { tool: "demo_search", args: { q: "hello", limit: 10 } });
+
+    expect(mocks.executeCall).toHaveBeenCalledWith(
+      state,
+      "demo_search",
+      { q: "hello", limit: 10 },
+      undefined,
+      expect.any(Function),
+      undefined,
+    );
+  });
+
   it("routes manual auth actions through the proxy tool", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
