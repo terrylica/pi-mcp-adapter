@@ -6,9 +6,10 @@
 
 import {
   auth as runSdkAuth,
+  extractWWWAuthenticateParams,
   UnauthorizedError,
 } from "@modelcontextprotocol/sdk/client/auth.js"
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js"
 import open from "open"
 import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
 import {
@@ -32,6 +33,7 @@ import {
   type StoredTokens,
 } from "./mcp-auth.ts"
 import type { ServerEntry } from "./types.ts"
+import { interpolateEnvRecord } from "./utils.ts"
 
 /** Auth status for a server */
 export type AuthStatus = "authenticated" | "expired" | "not_authenticated"
@@ -40,8 +42,18 @@ export interface AuthenticateOptions {
   onAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>
 }
 
-// Track pending transports for auth completion
-const pendingTransports = new Map<string, StreamableHTTPClientTransport>()
+type AuthDiscovery = {
+  resourceMetadataUrl?: URL
+  scope?: string
+}
+
+type PendingAuth = {
+  authProvider: McpOAuthProvider
+  serverUrl: string
+  discovery: AuthDiscovery
+}
+
+const pendingAuths = new Map<string, PendingAuth>()
 const pendingAuthStates = new Map<string, string>()
 const pendingAuthCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -106,6 +118,40 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
   return config
 }
 
+async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry): Promise<AuthDiscovery> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 5000)
+
+  try {
+    const headers = new Headers(interpolateEnvRecord(definition?.headers))
+    headers.set("content-type", "application/json")
+    headers.set("accept", "application/json, text/event-stream")
+
+    const response = await fetch(new URL(serverUrl), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 0,
+        method: "initialize",
+        params: {
+          protocolVersion: LATEST_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: "pi-mcp-adapter", version: "2.11.0" },
+        },
+      }),
+      signal: controller.signal,
+    })
+    const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(response)
+    await response.body?.cancel().catch(() => {})
+    return { ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}), ...(scope ? { scope } : {}) }
+  } catch {
+    return {}
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 function parseOAuthRedirectUri(redirectUri: string): { port: number; callbackHost: string; callbackPath: string } {
   let url: URL
   try {
@@ -165,7 +211,8 @@ export async function startAuth(
         throw new Error("Browser redirect is not used for client_credentials flow")
       },
     })
-    const result = await runSdkAuth(authProvider, { serverUrl })
+    const discovery = await probeAuthDiscovery(serverUrl, definition)
+    const result = await runSdkAuth(authProvider, { serverUrl, ...discovery })
     if (result !== "AUTHORIZED") {
       throw new UnauthorizedError("Failed to authorize")
     }
@@ -214,7 +261,8 @@ export async function startAuth(
 
     await updateOAuthState(serverName, oauthState, serverUrl)
 
-    const result = await runSdkAuth(authProvider, { serverUrl })
+    const discovery = await probeAuthDiscovery(serverUrl, definition)
+    const result = await runSdkAuth(authProvider, { serverUrl, ...discovery })
     if (result === "AUTHORIZED") {
       releaseCallbackServer(oauthState)
       await clearOAuthState(serverName)
@@ -223,8 +271,7 @@ export async function startAuth(
     if (!capturedUrl) {
       throw new UnauthorizedError("OAuth authorization URL was not provided")
     }
-    const pendingTransport = new StreamableHTTPClientTransport(new URL(serverUrl), { authProvider })
-    await setPendingTransport(serverName, pendingTransport, oauthState)
+    await setPendingAuth(serverName, { authProvider, serverUrl, discovery }, oauthState)
     return { authorizationUrl: capturedUrl.toString() }
   } catch (error) {
     await clearPendingAuth(serverName, oauthState)
@@ -232,13 +279,13 @@ export async function startAuth(
   }
 }
 
-async function setPendingTransport(
+async function setPendingAuth(
   serverName: string,
-  transport: StreamableHTTPClientTransport,
+  pendingAuth: PendingAuth,
   oauthState: string,
 ): Promise<void> {
   await clearPendingAuth(serverName)
-  pendingTransports.set(serverName, transport)
+  pendingAuths.set(serverName, pendingAuth)
   pendingAuthStates.set(serverName, oauthState)
   const cleanupTimer = setTimeout(() => {
     void clearPendingAuth(serverName, oauthState)
@@ -257,8 +304,7 @@ async function clearPendingAuth(serverName: string, oauthState?: string): Promis
     pendingAuthCleanupTimers.delete(serverName)
   }
 
-  const transport = pendingTransports.get(serverName)
-  pendingTransports.delete(serverName)
+  pendingAuths.delete(serverName)
   pendingAuthStates.delete(serverName)
   const stateToRelease = pendingState ?? oauthState
   if (stateToRelease) {
@@ -267,9 +313,6 @@ async function clearPendingAuth(serverName: string, oauthState?: string): Promis
     if (storedState === stateToRelease) {
       await clearOAuthState(serverName)
     }
-  }
-  if (transport) {
-    await transport.close().catch(() => {})
   }
 }
 
@@ -348,16 +391,22 @@ export async function completeAuth(
   serverName: string,
   authorizationCode: string
 ): Promise<AuthStatus> {
-  const transport = pendingTransports.get(serverName)
-  if (!transport) {
+  const pendingAuth = pendingAuths.get(serverName)
+  if (!pendingAuth) {
     throw new Error(`No pending OAuth flow for server: ${serverName}`)
   }
 
   const oauthState = await getOAuthState(serverName)
 
   try {
-    // Complete the auth using the transport's finishAuth method
-    await transport.finishAuth(authorizationCode)
+    const result = await runSdkAuth(pendingAuth.authProvider, {
+      serverUrl: pendingAuth.serverUrl,
+      authorizationCode,
+      ...pendingAuth.discovery,
+    })
+    if (result !== "AUTHORIZED") {
+      throw new UnauthorizedError("Failed to authorize")
+    }
     return "authenticated"
   } finally {
     await clearPendingAuth(serverName, oauthState)
@@ -485,7 +534,8 @@ export async function getValidToken(
         return null
       }
 
-      const result = await runSdkAuth(authProvider, { serverUrl })
+      const discovery = await probeAuthDiscovery(serverUrl)
+      const result = await runSdkAuth(authProvider, { serverUrl, ...discovery })
       if (result !== "AUTHORIZED") {
         return null
       }
@@ -565,7 +615,7 @@ export async function initializeOAuth(): Promise<void> {}
  * Stops the callback server and cancels pending auths.
  */
 export async function shutdownOAuth(): Promise<void> {
-  for (const serverName of Array.from(pendingTransports.keys())) {
+  for (const serverName of Array.from(pendingAuths.keys())) {
     await clearPendingAuth(serverName)
   }
   await stopCallbackServer()

@@ -12,26 +12,23 @@ const mocks = vi.hoisted(() => ({
   releaseCallbackServer: vi.fn(),
   open: vi.fn(),
   sdkAuth: vi.fn(),
-  finishAuth: vi.fn(),
-  transportClose: vi.fn(),
+  fetch: vi.fn(),
 }));
 
 class MockUnauthorizedError extends Error {}
 
-class MockStreamableHTTPClientTransport {
-  constructor(_url: URL, _options: unknown) {}
-
-  close = mocks.transportClose;
-  finishAuth = mocks.finishAuth;
-}
-
 vi.mock("@modelcontextprotocol/sdk/client/auth.js", () => ({
   auth: mocks.sdkAuth,
+  extractWWWAuthenticateParams: (response: Response) => {
+    const header = response.headers.get("www-authenticate") ?? "";
+    const resourceMetadata = /resource_metadata="([^"]+)"/.exec(header)?.[1];
+    const scope = /scope="([^"]+)"/.exec(header)?.[1];
+    return {
+      ...(resourceMetadata ? { resourceMetadataUrl: new URL(resourceMetadata) } : {}),
+      ...(scope ? { scope } : {}),
+    };
+  },
   UnauthorizedError: MockUnauthorizedError,
-}));
-
-vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
-  StreamableHTTPClientTransport: MockStreamableHTTPClientTransport,
 }));
 
 vi.mock("../mcp-callback-server.ts", () => ({
@@ -63,11 +60,12 @@ describe("mcp-auth-flow explicit auth", () => {
     mocks.releaseCallbackServer.mockReset();
     mocks.open.mockReset();
     mocks.sdkAuth.mockReset().mockResolvedValue("AUTHORIZED");
-    mocks.finishAuth.mockReset().mockResolvedValue(undefined);
-    mocks.transportClose.mockReset().mockResolvedValue(undefined);
+    mocks.fetch.mockReset().mockResolvedValue(new Response(null));
+    vi.stubGlobal("fetch", mocks.fetch);
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     rmSync(authDir, { recursive: true, force: true });
     if (originalOAuthDir === undefined) {
       delete process.env.MCP_OAUTH_DIR;
@@ -131,7 +129,6 @@ describe("mcp-auth-flow explicit auth", () => {
 
     expect(status).toBe("authenticated");
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
-    expect(mocks.transportClose).not.toHaveBeenCalled();
     expect(mocks.ensureCallbackServer).not.toHaveBeenCalled();
     expect(mocks.waitForCallback).not.toHaveBeenCalled();
     expect(mocks.open).not.toHaveBeenCalled();
@@ -503,9 +500,11 @@ describe("mcp-auth-flow explicit auth", () => {
       auth: "oauth",
     })).resolves.toBe("authenticated");
 
-    expect(mocks.finishAuth).toHaveBeenCalledWith("manual-code");
+    expect(mocks.sdkAuth).toHaveBeenNthCalledWith(2, expect.anything(), {
+      serverUrl: "https://api.example.com/mcp",
+      authorizationCode: "manual-code",
+    });
     expect(mocks.cancelPendingCallback).not.toHaveBeenCalled();
-    expect(mocks.transportClose).toHaveBeenCalledTimes(1);
     expect(getOAuthState("browser-fail")).toBeUndefined();
   });
 
@@ -535,6 +534,10 @@ describe("mcp-auth-flow explicit auth", () => {
   });
 
   it("releases reserved callback state after direct completeAuth", async () => {
+    const resourceMetadataUrl = "https://api.example.com/.well-known/oauth-protected-resource";
+    mocks.fetch.mockResolvedValueOnce(new Response(null, {
+      headers: { "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}", scope="mcp:read"` },
+    }));
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
@@ -545,14 +548,27 @@ describe("mcp-auth-flow explicit auth", () => {
     await startAuth("direct-complete", "https://api.example.com/mcp", {
       url: "https://api.example.com/mcp",
       auth: "oauth",
+      headers: { "X-Tenant": "tenant-a" },
     });
     const oauthState = getOAuthState("direct-complete");
 
     await expect(completeAuth("direct-complete", "auth-code")).resolves.toBe("authenticated");
 
-    expect(mocks.finishAuth).toHaveBeenCalledWith("auth-code");
+    const probeInit = mocks.fetch.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(probeInit.headers).get("x-tenant")).toBe("tenant-a");
+    expect(JSON.parse(String(probeInit.body)).params.clientInfo.name).toBe("pi-mcp-adapter");
+    expect(mocks.sdkAuth).toHaveBeenNthCalledWith(1, expect.anything(), {
+      serverUrl: "https://api.example.com/mcp",
+      resourceMetadataUrl: new URL(resourceMetadataUrl),
+      scope: "mcp:read",
+    });
+    expect(mocks.sdkAuth).toHaveBeenNthCalledWith(2, expect.anything(), {
+      serverUrl: "https://api.example.com/mcp",
+      authorizationCode: "auth-code",
+      resourceMetadataUrl: new URL(resourceMetadataUrl),
+      scope: "mcp:read",
+    });
     expect(mocks.releaseCallbackServer).toHaveBeenCalledWith(oauthState);
-    expect(mocks.transportClose).toHaveBeenCalledTimes(1);
     expect(getOAuthState("direct-complete")).toBeUndefined();
   });
 
